@@ -1,6 +1,6 @@
 #[cfg(any(
     feature = "native-tls",
-    feature = "rustls-tls",
+    feature = "__rustls",
 ))]
 use std::any::Any;
 use std::convert::TryInto;
@@ -237,7 +237,7 @@ impl ClientBuilder {
                         config.local_address,
                         config.nodelay)
                 },
-                #[cfg(feature = "rustls-tls")]
+                #[cfg(feature = "__rustls")]
                 TlsBackend::BuiltRustls(conn) => {
                     Connector::new_rustls_tls(
                         http,
@@ -247,7 +247,7 @@ impl ClientBuilder {
                         config.local_address,
                         config.nodelay)
                 },
-                #[cfg(feature = "rustls-tls")]
+                #[cfg(feature = "__rustls")]
                 TlsBackend::Rustls => {
                     use crate::tls::NoVerifier;
 
@@ -257,6 +257,7 @@ impl ClientBuilder {
                     } else {
                         tls.set_protocols(&["h2".into(), "http/1.1".into()]);
                     }
+                    #[cfg(feature = "rustls-tls-webpki-roots")]
                     tls.root_store
                         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
 
@@ -284,7 +285,7 @@ impl ClientBuilder {
                 },
                 #[cfg(any(
                     feature = "native-tls",
-                    feature = "rustls-tls",
+                    feature = "__rustls",
                 ))]
                 TlsBackend::UnknownPreconfigured => {
                     return Err(crate::error::builder(
@@ -747,7 +748,7 @@ impl ClientBuilder {
     ///
     /// # Optional
     ///
-    /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls`
+    /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
     /// feature to be enabled.
     #[cfg(feature = "__tls")]
     pub fn add_root_certificate(mut self, cert: Certificate) -> ClientBuilder {
@@ -759,7 +760,7 @@ impl ClientBuilder {
     ///
     /// # Optional
     ///
-    /// This requires the optional `native-tls` or `rustls-tls` feature to be
+    /// This requires the optional `native-tls` or `rustls-tls(-...)` feature to be
     /// enabled.
     #[cfg(feature = "__tls")]
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
@@ -804,7 +805,7 @@ impl ClientBuilder {
     ///
     /// # Optional
     ///
-    /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls`
+    /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
     /// feature to be enabled.
     #[cfg(feature = "__tls")]
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
@@ -833,8 +834,8 @@ impl ClientBuilder {
     ///
     /// # Optional
     ///
-    /// This requires the optional `rustls-tls` feature to be enabled.
-    #[cfg(feature = "rustls-tls")]
+    /// This requires the optional `rustls-tls(-...)` feature to be enabled.
+    #[cfg(feature = "__rustls")]
     pub fn use_rustls_tls(mut self) -> ClientBuilder {
         self.config.tls = TlsBackend::Rustls;
         self
@@ -857,10 +858,10 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires one of the optional features `native-tls` or
-    /// `rustls-tls` to be enabled.
+    /// `rustls-tls(-...)` to be enabled.
     #[cfg(any(
         feature = "native-tls",
-        feature = "rustls-tls",
+        feature = "__rustls",
     ))]
     pub fn use_preconfigured_tls(mut self, tls: impl Any) -> ClientBuilder {
         let mut tls = Some(tls);
@@ -873,7 +874,7 @@ impl ClientBuilder {
                 return self;
             }
         }
-        #[cfg(feature = "rustls-tls")]
+        #[cfg(feature = "__rustls")]
         {
             if let Some(conn) = (&mut tls as &mut dyn Any).downcast_mut::<Option<rustls::ClientConfig>>() {
 
@@ -1221,7 +1222,7 @@ impl Config {
             }
         }
 
-        #[cfg(all(feature = "native-tls-crate", feature = "rustls-tls"))]
+        #[cfg(all(feature = "native-tls-crate", feature = "__rustls"))]
         {
             f.field("tls_backend", &self.tls);
         }
