@@ -470,6 +470,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `cookies` feature to be enabled.
     #[cfg(feature = "cookies")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
     pub fn cookie_store(mut self, enable: bool) -> ClientBuilder {
         self.config.cookie_store = if enable {
             Some(cookie::CookieStore::default())
@@ -496,6 +497,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `gzip` feature to be enabled
     #[cfg(feature = "gzip")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "gzip")))]
     pub fn gzip(mut self, enable: bool) -> ClientBuilder {
         self.config.accepts.gzip = enable;
         self
@@ -518,6 +520,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `brotli` feature to be enabled
     #[cfg(feature = "brotli")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "brotli")))]
     pub fn brotli(mut self, enable: bool) -> ClientBuilder {
         self.config.accepts.brotli = enable;
         self
@@ -738,6 +741,7 @@ impl ClientBuilder {
     /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
     /// feature to be enabled.
     #[cfg(feature = "__tls")]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "default-tls", feature = "native-tls", feature = "rustls-tls"))))]
     pub fn add_root_certificate(mut self, cert: Certificate) -> ClientBuilder {
         self.config.root_certs.push(cert);
         self
@@ -752,6 +756,7 @@ impl ClientBuilder {
     /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
     /// feature to be enabled.
     #[cfg(feature = "__tls")]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "default-tls", feature = "native-tls", feature = "rustls-tls"))))]
     pub fn tls_built_in_root_certs(
         mut self,
         tls_built_in_root_certs: bool,
@@ -767,6 +772,7 @@ impl ClientBuilder {
     /// This requires the optional `native-tls` or `rustls-tls(-...)` feature to be
     /// enabled.
     #[cfg(any(feature = "native-tls", feature = "__rustls"))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "native-tls", feature = "rustls-tls"))))]
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
         self.config.identity = Some(identity);
         self
@@ -787,6 +793,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `native-tls` feature to be enabled.
     #[cfg(feature = "native-tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "native-tls")))]
     pub fn danger_accept_invalid_hostnames(
         mut self,
         accept_invalid_hostname: bool,
@@ -812,6 +819,7 @@ impl ClientBuilder {
     /// This requires the optional `default-tls`, `native-tls`, or `rustls-tls(-...)`
     /// feature to be enabled.
     #[cfg(feature = "__tls")]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "default-tls", feature = "native-tls", feature = "rustls-tls"))))]
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
         self.config.certs_verification = !accept_invalid_certs;
         self
@@ -826,6 +834,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `native-tls` feature to be enabled.
     #[cfg(feature = "native-tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "native-tls")))]
     pub fn use_native_tls(mut self) -> ClientBuilder {
         self.config.tls = TlsBackend::Default;
         self
@@ -840,6 +849,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `rustls-tls(-...)` feature to be enabled.
     #[cfg(feature = "__rustls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "rustls-tls")))]
     pub fn use_rustls_tls(mut self) -> ClientBuilder {
         self.config.tls = TlsBackend::Rustls;
         self
@@ -867,6 +877,7 @@ impl ClientBuilder {
         feature = "native-tls",
         feature = "__rustls",
     ))]
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "native-tls", feature = "rustls-tls"))))]
     pub fn use_preconfigured_tls(mut self, tls: impl Any) -> ClientBuilder {
         let mut tls = Some(tls);
         #[cfg(feature = "native-tls")]
@@ -902,6 +913,7 @@ impl ClientBuilder {
     ///
     /// This requires the optional `trust-dns` feature to be enabled
     #[cfg(feature = "trust-dns")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "trust-dns")))]
     pub fn trust_dns(mut self, enable: bool) -> ClientBuilder {
         self.config.trust_dns = enable;
         self
