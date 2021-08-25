@@ -335,7 +335,7 @@ async fn test_allowed_methods() {
         .send()
         .await;
 
-    assert_eq!(resp.is_err(), false);
+    assert!(resp.is_ok());
 
     let resp = reqwest::Client::builder()
         .https_only(true)
@@ -345,5 +345,5 @@ async fn test_allowed_methods() {
         .send()
         .await;
 
-    assert_eq!(resp.is_err(), true);
+    assert!(resp.is_err());
 }
