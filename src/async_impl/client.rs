@@ -2029,7 +2029,6 @@ impl Future for PendingRequest {
                 }
             }
 
-            debug!("response '{}' for {}", res.status(), self.url);
             let res = Response::new(
                 res,
                 self.url.clone(),
