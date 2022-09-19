@@ -121,7 +121,7 @@ struct Config {
     error: Option<crate::Error>,
     error_for_status: bool,
     https_only: bool,
-    dns_overrides: HashMap<String, SocketAddr>,
+    dns_overrides: HashMap<String, Vec<SocketAddr>>,
 }
 
 impl Default for ClientBuilder {
@@ -1324,7 +1324,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Override DNS resolution for specific domains to particular IP addresses.
+    /// Override DNS resolution for specific domains to a particular IP address.
     ///
     /// Warning
     ///
@@ -1332,8 +1332,22 @@ impl ClientBuilder {
     /// traffic to a particular port you must include this port in the URL
     /// itself, any port in the overridden addr will be ignored and traffic sent
     /// to the conventional port for the given scheme (e.g. 80 for http).
-    pub fn resolve(mut self, domain: &str, addr: SocketAddr) -> ClientBuilder {
-        self.config.dns_overrides.insert(domain.to_string(), addr);
+    pub fn resolve(self, domain: &str, addr: SocketAddr) -> ClientBuilder {
+        self.resolve_to_addrs(domain, &[addr])
+    }
+
+    /// Override DNS resolution for specific domains to particular IP addresses.
+    ///
+    /// Warning
+    ///
+    /// Since the DNS protocol has no notion of ports, if you wish to send
+    /// traffic to a particular port you must include this port in the URL
+    /// itself, any port in the overridden addresses will be ignored and traffic sent
+    /// to the conventional port for the given scheme (e.g. 80 for http).
+    pub fn resolve_to_addrs(mut self, domain: &str, addrs: &[SocketAddr]) -> ClientBuilder {
+        self.config
+            .dns_overrides
+            .insert(domain.to_string(), addrs.to_vec());
         self
     }
 }
