@@ -120,6 +120,7 @@ struct Config {
     http09_responses: bool,
     http1_title_case_headers: bool,
     http1_allow_obsolete_multiline_headers_in_responses: bool,
+    http1_ignore_invalid_headers_in_responses: bool,
     http2_initial_stream_window_size: Option<u32>,
     http2_initial_connection_window_size: Option<u32>,
     http2_adaptive_window: bool,
@@ -202,6 +203,7 @@ impl ClientBuilder {
                 http09_responses: false,
                 http1_title_case_headers: false,
                 http1_allow_obsolete_multiline_headers_in_responses: false,
+                http1_ignore_invalid_headers_in_responses: false,
                 http2_initial_stream_window_size: None,
                 http2_initial_connection_window_size: None,
                 http2_adaptive_window: false,
@@ -622,6 +624,10 @@ impl ClientBuilder {
             builder.http1_allow_obsolete_multiline_headers_in_responses(true);
         }
 
+        if config.http1_ignore_invalid_headers_in_responses {
+            builder.http1_ignore_invalid_headers_in_responses(true);
+        }
+
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
         Ok(Client {
@@ -1022,6 +1028,12 @@ impl ClientBuilder {
     ) -> ClientBuilder {
         self.config
             .http1_allow_obsolete_multiline_headers_in_responses = value;
+        self
+    }
+
+    /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
+    pub fn http1_ignore_invalid_headers_in_responses(mut self, value: bool) -> ClientBuilder {
+        self.config.http1_ignore_invalid_headers_in_responses = value;
         self
     }
 
@@ -1881,6 +1893,10 @@ impl Config {
 
         if self.http1_allow_obsolete_multiline_headers_in_responses {
             f.field("http1_allow_obsolete_multiline_headers_in_responses", &true);
+        }
+
+        if self.http1_ignore_invalid_headers_in_responses {
+            f.field("http1_ignore_invalid_headers_in_responses", &true);
         }
 
         if matches!(self.http_version_pref, HttpVersionPref::Http1) {
