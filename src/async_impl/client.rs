@@ -13,7 +13,7 @@ use http::header::{
 };
 use http::uri::Scheme;
 use http::Uri;
-use hyper_util::client::legacy::connect::HttpConnector;
+use hyper::client::{HttpConnector, ResponseFuture as HyperResponseFuture};
 #[cfg(feature = "native-tls-crate")]
 use native_tls_crate::TlsConnector;
 use pin_project_lite::pin_project;
@@ -46,13 +46,11 @@ use crate::Certificate;
 #[cfg(any(feature = "native-tls", feature = "__rustls"))]
 use crate::Identity;
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
-use log::debug;
+use log::{debug, trace};
 #[cfg(feature = "http3")]
 use quinn::TransportConfig;
 #[cfg(feature = "http3")]
 use quinn::VarInt;
-
-type HyperResponseFuture = hyper_util::client::legacy::ResponseFuture;
 
 /// An asynchronous `Client` to make Requests with.
 ///
@@ -80,7 +78,6 @@ pub struct ClientBuilder {
 
 enum HttpVersionPref {
     Http1,
-    #[cfg(feature = "http2")]
     Http2,
     #[cfg(feature = "http3")]
     Http3,
@@ -127,23 +124,14 @@ struct Config {
     http1_allow_obsolete_multiline_headers_in_responses: bool,
     http1_ignore_invalid_headers_in_responses: bool,
     http1_allow_spaces_after_header_name_in_responses: bool,
-    #[cfg(feature = "http2")]
     http2_initial_stream_window_size: Option<u32>,
-    #[cfg(feature = "http2")]
     http2_initial_connection_window_size: Option<u32>,
-    #[cfg(feature = "http2")]
     http2_adaptive_window: bool,
-    #[cfg(feature = "http2")]
     http2_max_frame_size: Option<u32>,
-    #[cfg(feature = "http2")]
     http2_keep_alive_interval: Option<Duration>,
-    #[cfg(feature = "http2")]
     http2_keep_alive_timeout: Option<Duration>,
-    #[cfg(feature = "http2")]
     http2_keep_alive_while_idle: bool,
     local_address: Option<IpAddr>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<String>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
@@ -222,23 +210,14 @@ impl ClientBuilder {
                 http1_allow_obsolete_multiline_headers_in_responses: false,
                 http1_ignore_invalid_headers_in_responses: false,
                 http1_allow_spaces_after_header_name_in_responses: false,
-                #[cfg(feature = "http2")]
                 http2_initial_stream_window_size: None,
-                #[cfg(feature = "http2")]
                 http2_initial_connection_window_size: None,
-                #[cfg(feature = "http2")]
                 http2_adaptive_window: false,
-                #[cfg(feature = "http2")]
                 http2_max_frame_size: None,
-                #[cfg(feature = "http2")]
                 http2_keep_alive_interval: None,
-                #[cfg(feature = "http2")]
                 http2_keep_alive_timeout: None,
-                #[cfg(feature = "http2")]
                 http2_keep_alive_while_idle: false,
                 local_address: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                interface: None,
                 nodelay: true,
                 trust_dns: cfg!(feature = "trust-dns"),
                 #[cfg(feature = "cookies")]
@@ -370,7 +349,6 @@ impl ClientBuilder {
                             HttpVersionPref::Http1 => {
                                 tls.request_alpns(&["http/1.1"]);
                             }
-                            #[cfg(feature = "http2")]
                             HttpVersionPref::Http2 => {
                                 tls.request_alpns(&["h2"]);
                             }
@@ -436,12 +414,6 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
-                        #[cfg(any(
-                            target_os = "android",
-                            target_os = "fuchsia",
-                            target_os = "linux"
-                        ))]
-                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )?
@@ -453,8 +425,6 @@ impl ClientBuilder {
                     proxies.clone(),
                     user_agent(&config.headers),
                     config.local_address,
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    config.interface.as_deref(),
                     config.nodelay,
                     config.tls_info,
                 ),
@@ -470,12 +440,6 @@ impl ClientBuilder {
                             config.quic_receive_window,
                             config.quic_send_window,
                             config.local_address,
-                            #[cfg(any(
-                                target_os = "android",
-                                target_os = "fuchsia",
-                                target_os = "linux"
-                            ))]
-                            config.interface.as_deref(),
                             &config.http_version_pref,
                         )?;
                     }
@@ -486,12 +450,6 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
-                        #[cfg(any(
-                            target_os = "android",
-                            target_os = "fuchsia",
-                            target_os = "linux"
-                        ))]
-                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )
@@ -508,7 +466,18 @@ impl ClientBuilder {
 
                     #[cfg(feature = "rustls-tls-webpki-roots")]
                     if config.tls_built_in_root_certs {
-                        root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+                        use rustls::OwnedTrustAnchor;
+
+                        let trust_anchors =
+                            webpki_roots::TLS_SERVER_ROOTS.iter().map(|trust_anchor| {
+                                OwnedTrustAnchor::from_subject_spki_name_constraints(
+                                    trust_anchor.subject,
+                                    trust_anchor.spki,
+                                    trust_anchor.name_constraints,
+                                )
+                            });
+
+                        root_cert_store.add_trust_anchors(trust_anchors);
                     }
 
                     #[cfg(feature = "rustls-tls-native-roots")]
@@ -518,14 +487,17 @@ impl ClientBuilder {
                         for cert in rustls_native_certs::load_native_certs()
                             .map_err(crate::error::builder)?
                         {
+                            let cert = rustls::Certificate(cert.0);
                             // Continue on parsing errors, as native stores often include ancient or syntactically
                             // invalid certificates, like root certificates without any X509 extensions.
                             // Inspiration: https://github.com/rustls/rustls/blob/633bf4ba9d9521a95f68766d04c22e2b01e68318/rustls/src/anchors.rs#L105-L112
-                            match root_cert_store.add(cert.into()) {
+                            match root_cert_store.add(&cert) {
                                 Ok(_) => valid_count += 1,
                                 Err(err) => {
                                     invalid_count += 1;
-                                    log::debug!("rustls failed to parse DER certificate: {err:?}");
+                                    log::warn!(
+                                        "rustls failed to parse DER certificate {err:?} {cert:?}"
+                                    );
                                 }
                             }
                         }
@@ -560,8 +532,12 @@ impl ClientBuilder {
                     }
 
                     // Build TLS config
-                    let config_builder =
-                        rustls::ClientConfig::builder().with_root_certificates(root_cert_store);
+                    let config_builder = rustls::ClientConfig::builder()
+                        .with_safe_default_cipher_suites()
+                        .with_safe_default_kx_groups()
+                        .with_protocol_versions(&versions)
+                        .map_err(crate::error::builder)?
+                        .with_root_certificates(root_cert_store);
 
                     // Finalize TLS config
                     let mut tls = if let Some(id) = config.identity {
@@ -583,7 +559,6 @@ impl ClientBuilder {
                         HttpVersionPref::Http1 => {
                             tls.alpn_protocols = vec!["http/1.1".into()];
                         }
-                        #[cfg(feature = "http2")]
                         HttpVersionPref::Http2 => {
                             tls.alpn_protocols = vec!["h2".into()];
                         }
@@ -618,12 +593,6 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
-                        #[cfg(any(
-                            target_os = "android",
-                            target_os = "fuchsia",
-                            target_os = "linux"
-                        ))]
-                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )
@@ -643,42 +612,35 @@ impl ClientBuilder {
         connector.set_timeout(config.connect_timeout);
         connector.set_verbose(config.connection_verbose);
 
-        let mut builder =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new());
-        #[cfg(feature = "http2")]
-        {
-            if matches!(config.http_version_pref, HttpVersionPref::Http2) {
-                builder.http2_only(true);
-            }
-
-            if let Some(http2_initial_stream_window_size) = config.http2_initial_stream_window_size
-            {
-                builder.http2_initial_stream_window_size(http2_initial_stream_window_size);
-            }
-            if let Some(http2_initial_connection_window_size) =
-                config.http2_initial_connection_window_size
-            {
-                builder.http2_initial_connection_window_size(http2_initial_connection_window_size);
-            }
-            if config.http2_adaptive_window {
-                builder.http2_adaptive_window(true);
-            }
-            if let Some(http2_max_frame_size) = config.http2_max_frame_size {
-                builder.http2_max_frame_size(http2_max_frame_size);
-            }
-            if let Some(http2_keep_alive_interval) = config.http2_keep_alive_interval {
-                builder.http2_keep_alive_interval(http2_keep_alive_interval);
-            }
-            if let Some(http2_keep_alive_timeout) = config.http2_keep_alive_timeout {
-                builder.http2_keep_alive_timeout(http2_keep_alive_timeout);
-            }
-            if config.http2_keep_alive_while_idle {
-                builder.http2_keep_alive_while_idle(true);
-            }
+        let mut builder = hyper::Client::builder();
+        if matches!(config.http_version_pref, HttpVersionPref::Http2) {
+            builder.http2_only(true);
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        builder.timer(hyper_util::rt::TokioTimer::new());
+        if let Some(http2_initial_stream_window_size) = config.http2_initial_stream_window_size {
+            builder.http2_initial_stream_window_size(http2_initial_stream_window_size);
+        }
+        if let Some(http2_initial_connection_window_size) =
+            config.http2_initial_connection_window_size
+        {
+            builder.http2_initial_connection_window_size(http2_initial_connection_window_size);
+        }
+        if config.http2_adaptive_window {
+            builder.http2_adaptive_window(true);
+        }
+        if let Some(http2_max_frame_size) = config.http2_max_frame_size {
+            builder.http2_max_frame_size(http2_max_frame_size);
+        }
+        if let Some(http2_keep_alive_interval) = config.http2_keep_alive_interval {
+            builder.http2_keep_alive_interval(http2_keep_alive_interval);
+        }
+        if let Some(http2_keep_alive_timeout) = config.http2_keep_alive_timeout {
+            builder.http2_keep_alive_timeout(http2_keep_alive_timeout);
+        }
+        if config.http2_keep_alive_while_idle {
+            builder.http2_keep_alive_while_idle(true);
+        }
+
         builder.pool_idle_timeout(config.pool_idle_timeout);
         builder.pool_max_idle_per_host(config.pool_max_idle_per_host);
         connector.set_keepalive(config.tcp_keepalive);
@@ -1150,7 +1112,6 @@ impl ClientBuilder {
     }
 
     /// Only use HTTP/2.
-    #[cfg(feature = "http2")]
     pub fn http2_prior_knowledge(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http2;
         self
@@ -1167,7 +1128,6 @@ impl ClientBuilder {
     /// Sets the `SETTINGS_INITIAL_WINDOW_SIZE` option for HTTP2 stream-level flow control.
     ///
     /// Default is currently 65,535 but may change internally to optimize for common uses.
-    #[cfg(feature = "http2")]
     pub fn http2_initial_stream_window_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
         self.config.http2_initial_stream_window_size = sz.into();
         self
@@ -1176,7 +1136,6 @@ impl ClientBuilder {
     /// Sets the max connection-level flow control for HTTP2
     ///
     /// Default is currently 65,535 but may change internally to optimize for common uses.
-    #[cfg(feature = "http2")]
     pub fn http2_initial_connection_window_size(
         mut self,
         sz: impl Into<Option<u32>>,
@@ -1189,7 +1148,6 @@ impl ClientBuilder {
     ///
     /// Enabling this will override the limits set in `http2_initial_stream_window_size` and
     /// `http2_initial_connection_window_size`.
-    #[cfg(feature = "http2")]
     pub fn http2_adaptive_window(mut self, enabled: bool) -> ClientBuilder {
         self.config.http2_adaptive_window = enabled;
         self
@@ -1198,7 +1156,6 @@ impl ClientBuilder {
     /// Sets the maximum frame size to use for HTTP2.
     ///
     /// Default is currently 16,384 but may change internally to optimize for common uses.
-    #[cfg(feature = "http2")]
     pub fn http2_max_frame_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
         self.config.http2_max_frame_size = sz.into();
         self
@@ -1208,7 +1165,6 @@ impl ClientBuilder {
     ///
     /// Pass `None` to disable HTTP2 keep-alive.
     /// Default is currently disabled.
-    #[cfg(feature = "http2")]
     pub fn http2_keep_alive_interval(
         mut self,
         interval: impl Into<Option<Duration>>,
@@ -1222,7 +1178,6 @@ impl ClientBuilder {
     /// If the ping is not acknowledged within the timeout, the connection will be closed.
     /// Does nothing if `http2_keep_alive_interval` is disabled.
     /// Default is currently disabled.
-    #[cfg(feature = "http2")]
     pub fn http2_keep_alive_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.http2_keep_alive_timeout = Some(timeout);
         self
@@ -1234,7 +1189,6 @@ impl ClientBuilder {
     /// If enabled, pings are also sent when no streams are active.
     /// Does nothing if `http2_keep_alive_interval` is disabled.
     /// Default is `false`.
-    #[cfg(feature = "http2")]
     pub fn http2_keep_alive_while_idle(mut self, enabled: bool) -> ClientBuilder {
         self.config.http2_keep_alive_while_idle = enabled;
         self
@@ -1266,22 +1220,6 @@ impl ClientBuilder {
         T: Into<Option<IpAddr>>,
     {
         self.config.local_address = addr.into();
-        self
-    }
-
-    /// Bind to an interface by `SO_BINDTODEVICE`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let interface = "lo";
-    /// let client = reqwest::Client::builder()
-    ///     .interface(interface)
-    ///     .build().unwrap();
-    /// ```
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface(mut self, interface: &str) -> ClientBuilder {
-        self.config.interface = Some(interface.to_string());
         self
     }
 
@@ -1728,7 +1666,7 @@ impl ClientBuilder {
     }
 }
 
-type HyperClient = hyper_util::client::legacy::Client<Connector, super::Body>;
+type HyperClient = hyper::Client<Connector, super::body::ImplStream>;
 
 impl Default for Client {
     fn default() -> Self {
@@ -1908,7 +1846,9 @@ impl Client {
                 ResponseFuture::H3(self.inner.h3_client.as_ref().unwrap().request(req))
             }
             _ => {
-                let mut req = builder.body(body).expect("valid request parts");
+                let mut req = builder
+                    .body(body.into_stream())
+                    .expect("valid request parts");
                 *req.headers_mut() = headers.clone();
                 ResponseFuture::Default(self.inner.hyper.request(req))
             }
@@ -2058,7 +1998,6 @@ impl Config {
             f.field("http1_only", &true);
         }
 
-        #[cfg(feature = "http2")]
         if matches!(self.http_version_pref, HttpVersionPref::Http2) {
             f.field("http2_prior_knowledge", &true);
         }
@@ -2073,11 +2012,6 @@ impl Config {
 
         if let Some(ref v) = self.local_address {
             f.field("local_address", v);
-        }
-
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let Some(ref v) = self.interface {
-            f.field("interface", v);
         }
 
         if self.nodelay {
@@ -2238,10 +2172,7 @@ impl PendingRequest {
         self.project().headers
     }
 
-    #[cfg(feature = "http2")]
     fn retry_error(mut self: Pin<&mut Self>, err: &(dyn std::error::Error + 'static)) -> bool {
-        use log::trace;
-
         if !is_retryable_error(err) {
             return false;
         }
@@ -2287,7 +2218,7 @@ impl PendingRequest {
                 let mut req = hyper::Request::builder()
                     .method(self.method.clone())
                     .uri(uri)
-                    .body(body)
+                    .body(body.into_stream())
                     .expect("valid request parts");
                 *req.headers_mut() = self.headers.clone();
                 ResponseFuture::Default(self.client.hyper.request(req))
@@ -2298,15 +2229,7 @@ impl PendingRequest {
     }
 }
 
-#[cfg(feature = "http2")]
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    // pop the legacy::Error
-    let err = if let Some(err) = err.source() {
-        err
-    } else {
-        return false;
-    };
-
     #[cfg(feature = "http3")]
     if let Some(cause) = err.source() {
         if let Some(err) = cause.downcast_ref::<h3::Error>() {
@@ -2376,7 +2299,6 @@ impl Future for PendingRequest {
             let res = match self.as_mut().in_flight().get_mut() {
                 ResponseFuture::Default(r) => match Pin::new(r).poll(cx) {
                     Poll::Ready(Err(e)) => {
-                        #[cfg(feature = "http2")]
                         if self.as_mut().retry_error(&e) {
                             continue;
                         }
@@ -2532,7 +2454,7 @@ impl Future for PendingRequest {
                                         let mut req = hyper::Request::builder()
                                             .method(self.method.clone())
                                             .uri(uri.clone())
-                                            .body(body)
+                                            .body(body.into_stream())
                                             .expect("valid request parts");
                                         *req.headers_mut() = headers.clone();
                                         std::mem::swap(self.as_mut().headers(), &mut headers);
