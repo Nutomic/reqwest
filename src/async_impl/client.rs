@@ -142,6 +142,8 @@ struct Config {
     #[cfg(feature = "http2")]
     http2_keep_alive_while_idle: bool,
     local_address: Option<IpAddr>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    interface: Option<String>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
@@ -235,6 +237,8 @@ impl ClientBuilder {
                 #[cfg(feature = "http2")]
                 http2_keep_alive_while_idle: false,
                 local_address: None,
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                interface: None,
                 nodelay: true,
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
@@ -432,6 +436,12 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux"
+                        ))]
+                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )?
@@ -443,6 +453,8 @@ impl ClientBuilder {
                     proxies.clone(),
                     user_agent(&config.headers),
                     config.local_address,
+                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                    config.interface.as_deref(),
                     config.nodelay,
                     config.tls_info,
                 ),
@@ -458,6 +470,12 @@ impl ClientBuilder {
                             config.quic_receive_window,
                             config.quic_send_window,
                             config.local_address,
+                            #[cfg(any(
+                                target_os = "android",
+                                target_os = "fuchsia",
+                                target_os = "linux"
+                            ))]
+                            config.interface.as_deref(),
                             &config.http_version_pref,
                         )?;
                     }
@@ -468,6 +486,12 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux"
+                        ))]
+                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )
@@ -594,6 +618,12 @@ impl ClientBuilder {
                         proxies.clone(),
                         user_agent(&config.headers),
                         config.local_address,
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux"
+                        ))]
+                        config.interface.as_deref(),
                         config.nodelay,
                         config.tls_info,
                     )
@@ -1244,6 +1274,22 @@ impl ClientBuilder {
         T: Into<Option<IpAddr>>,
     {
         self.config.local_address = addr.into();
+        self
+    }
+
+    /// Bind to an interface by `SO_BINDTODEVICE`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let interface = "lo";
+    /// let client = reqwest::Client::builder()
+    ///     .interface(interface)
+    ///     .build().unwrap();
+    /// ```
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn interface(mut self, interface: &str) -> ClientBuilder {
+        self.config.interface = Some(interface.to_string());
         self
     }
 
@@ -2070,6 +2116,11 @@ impl Config {
 
         if let Some(ref v) = self.local_address {
             f.field("local_address", v);
+        }
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        if let Some(ref v) = self.interface {
+            f.field("interface", v);
         }
 
         if self.nodelay {
