@@ -108,6 +108,7 @@ struct Config {
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
     referer: bool,
+    read_timeout: Option<Duration>,
     timeout: Option<Duration>,
     #[cfg(feature = "__tls")]
     root_certs: Vec<Certificate>,
@@ -205,6 +206,7 @@ impl ClientBuilder {
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::default(),
                 referer: true,
+                read_timeout: None,
                 timeout: None,
                 #[cfg(feature = "__tls")]
                 root_certs: Vec::new(),
@@ -741,6 +743,7 @@ impl ClientBuilder {
                 headers: config.headers,
                 redirect_policy: config.redirect_policy,
                 referer: config.referer,
+                read_timeout: config.read_timeout,
                 request_timeout: config.timeout,
                 proxies,
                 proxies_maybe_http_auth,
@@ -1038,14 +1041,26 @@ impl ClientBuilder {
 
     // Timeout options
 
-    /// Enables a request timeout.
+    /// Enables a total request timeout.
     ///
     /// The timeout is applied from when the request starts connecting until the
-    /// response body has finished.
+    /// response body has finished. Also considered a total deadline.
     ///
     /// Default is no timeout.
     pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.timeout = Some(timeout);
+        self
+    }
+
+    /// Enables a read timeout.
+    ///
+    /// The timeout applies to each read operation, and resets after a
+    /// successful read. This is more appropriate for detecting stalled
+    /// connections when the size isn't known beforehand.
+    ///
+    /// Default is no timeout.
+    pub fn read_timeout(mut self, timeout: Duration) -> ClientBuilder {
+        self.config.read_timeout = Some(timeout);
         self
     }
 
@@ -1995,8 +2010,14 @@ impl Client {
             }
         };
 
-        let timeout = timeout
+        let total_timeout = timeout
             .or(self.inner.request_timeout)
+            .map(tokio::time::sleep)
+            .map(Box::pin);
+
+        let read_timeout_fut = self
+            .inner
+            .read_timeout
             .map(tokio::time::sleep)
             .map(Box::pin);
 
@@ -2014,7 +2035,9 @@ impl Client {
                 client: self.inner.clone(),
 
                 in_flight,
-                timeout,
+                total_timeout,
+                read_timeout_fut,
+                read_timeout: self.inner.read_timeout,
             }),
         }
     }
@@ -2220,6 +2243,7 @@ struct ClientRef {
     redirect_policy: redirect::Policy,
     referer: bool,
     request_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
     proxies: Arc<Vec<Proxy>>,
     proxies_maybe_http_auth: bool,
     error_for_status: bool,
@@ -2261,6 +2285,9 @@ impl ClientRef {
         if self.error_for_status {
             f.field("error_for_status", &true);
         }
+        if let Some(ref d) = self.read_timeout {
+            f.field("read_timeout", d);
+        }
     }
 }
 
@@ -2292,7 +2319,10 @@ pin_project! {
         #[pin]
         in_flight: ResponseFuture,
         #[pin]
-        timeout: Option<Pin<Box<Sleep>>>,
+        total_timeout: Option<Pin<Box<Sleep>>>,
+        #[pin]
+        read_timeout_fut: Option<Pin<Box<Sleep>>>,
+        read_timeout: Option<Duration>,
     }
 }
 
@@ -2307,8 +2337,12 @@ impl PendingRequest {
         self.project().in_flight
     }
 
-    fn timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
-        self.project().timeout
+    fn total_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
+        self.project().total_timeout
+    }
+
+    fn read_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
+        self.project().read_timeout_fut
     }
 
     fn urls(self: Pin<&mut Self>) -> &mut Vec<Url> {
@@ -2445,7 +2479,15 @@ impl Future for PendingRequest {
     type Output = Result<Response, crate::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(delay) = self.as_mut().timeout().as_mut().as_pin_mut() {
+        if let Some(delay) = self.as_mut().total_timeout().as_mut().as_pin_mut() {
+            if let Poll::Ready(()) = delay.poll(cx) {
+                return Poll::Ready(Err(
+                    crate::error::request(crate::error::TimedOut).with_url(self.url.clone())
+                ));
+            }
+        }
+
+        if let Some(delay) = self.as_mut().read_timeout().as_mut().as_pin_mut() {
             if let Poll::Ready(()) = delay.poll(cx) {
                 return Poll::Ready(Err(
                     crate::error::request(crate::error::TimedOut).with_url(self.url.clone())
@@ -2637,7 +2679,8 @@ impl Future for PendingRequest {
                 res,
                 self.url.clone(),
                 self.client.accepts,
-                self.timeout.take(),
+                self.total_timeout.take(),
+                self.read_timeout,
             );
 
             if self.client.error_for_status {
