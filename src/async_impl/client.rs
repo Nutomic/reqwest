@@ -2418,7 +2418,7 @@ impl PendingRequest {
         self.project().headers
     }
 
-    #[cfg(feature = "http2")]
+    #[cfg(any(feature = "http2", feature = "http3"))]
     fn retry_error(mut self: Pin<&mut Self>, err: &(dyn std::error::Error + 'static)) -> bool {
         use log::trace;
 
@@ -2478,7 +2478,7 @@ impl PendingRequest {
     }
 }
 
-#[cfg(feature = "http2")]
+#[cfg(any(feature = "http2", feature = "http3"))]
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     // pop the legacy::Error
     let err = if let Some(err) = err.source() {
@@ -2496,6 +2496,7 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
         }
     }
 
+    #[cfg(feature = "http2")]
     if let Some(cause) = err.source() {
         if let Some(err) = cause.downcast_ref::<h2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
